@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Simple Music Player</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ctext y='50' font-size='50'%3E%F0%9F%8E%B5%3C/text%3E%3C/svg%3E" />
+  <style>
+    :root { --bg:#0f172a; --card:#111827; --line:#243045; --text:#e5e7eb; --muted:#9ca3af; --brand:#22d3ee; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, Arial, sans-serif; background: linear-gradient(180deg,#020617,#0f172a); color: var(--text); }
+    .wrap { max-width: 880px; margin: 24px auto; padding: 0 14px 30px; }
+    .card { background: rgba(17,24,39,.88); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 14px; }
+    h1 { margin: 0 0 14px; font-size: 26px; }
+    .muted { color: var(--muted); font-size: 13px; }
+    .section-title { margin: 10px 0 8px; font-weight: 700; font-size: 16px; }
+    .row { display: flex; gap: 8px; }
+    input { flex: 1; background:#0b1220; color:var(--text); border:1px solid var(--line); border-radius:10px; padding:10px; }
+    button { border:0; background:var(--brand); color:#04151c; font-weight:600; padding:10px 14px; border-radius:10px; cursor:pointer; }
+    ul { list-style:none; margin:0; padding:0; }
+    li { display:flex; justify-content:space-between; gap:10px; border-bottom:1px solid var(--line); padding:10px 0; }
+    .left { min-width:0; }
+    .name { font-weight:700; }
+    .url { display:block; word-break:break-all; color:#7dd3fc; font-size:12px; margin-top:4px; }
+    .btns { display:flex; gap:6px; align-items:center; }
+    .btn-ghost { background:#0b1220; color:var(--text); border:1px solid var(--line); }
+    audio { width:100%; margin-top:12px; }
+    #app { display:none; }
+    .queue { font-size:13px; color:#cbd5e1; margin-top:8px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>🎵 Simple Music Player</h1>
+      <div id="login">
+        <div class="section-title">访问密码</div>
+        <div class="row">
+          <input id="pwd" type="password" placeholder="请输入访问密码" />
+          <button id="enter">进入</button>
+        </div>
+        <div class="muted" style="margin-top:8px">默认密码：music2026（建议上线后改掉）</div>
+      </div>
+
+      <div id="app">
+        <div class="section-title">全球热门 5 首（每日更新）</div>
+        <div id="hot-meta" class="muted"></div>
+        <ul id="hot-list"></ul>
+
+        <div class="section-title">搜索歌曲</div>
+        <div class="row">
+          <input id="q" placeholder="输入歌曲名或歌手，例如: blinding lights" />
+          <button id="search">搜索</button>
+        </div>
+        <ul id="result-list" style="margin-top:8px"></ul>
+
+        <audio id="player" controls></audio>
+        <div id="queue-info" class="queue">连续播放：关闭</div>
+        <div class="row" style="margin-top:8px">
+          <button id="toggle-loop" class="btn-ghost">开启连续播放</button>
+          <button id="next" class="btn-ghost">下一首</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const ACCESS_PASSWORD = 'music2026';
+    const DAILY_CACHE_KEY = 'daily_hot_5';
+    const fallbackSongs = [
+      { name: 'Blinding Lights', artist: 'The Weeknd', sourceUrl: 'https://music.apple.com' },
+      { name: 'Shape of You', artist: 'Ed Sheeran', sourceUrl: 'https://music.apple.com' },
+      { name: 'As It Was', artist: 'Harry Styles', sourceUrl: 'https://music.apple.com' },
+      { name: 'Flowers', artist: 'Miley Cyrus', sourceUrl: 'https://music.apple.com' },
+      { name: 'Levitating', artist: 'Dua Lipa', sourceUrl: 'https://music.apple.com' }
+    ];
+
+    const hotList = document.getElementById('hot-list');
+    const hotMeta = document.getElementById('hot-meta');
+    const resultList = document.getElementById('result-list');
+    const player = document.getElementById('player');
+    const input = document.getElementById('q');
+    const queueInfo = document.getElementById('queue-info');
+
+    let continuousPlay = false;
+    let currentQueue = [];
+    let currentIndex = -1;
+
+    function todayTag() { return new Date().toISOString().slice(0, 10); }
+
+    function normalizeSong(song) {
+      return {
+        title: song.trackName || song.name || '未知歌曲',
+        artist: song.artistName || song.artist || '未知歌手',
+        previewUrl: song.previewUrl || '',
+        sourceUrl: song.sourceUrl || song.trackViewUrl || song.collectionViewUrl || ''
+      };
+    }
+
+    async function quickResolve(song) {
+      const term = encodeURIComponent(`${song.title} ${song.artist}`);
+      const url = `https://itunes.apple.com/search?term=${term}&entity=song&limit=1`;
+      const res = await fetch(url);
+      const data = await res.json();
+      const first = data.results && data.results[0];
+      return first && first.previewUrl ? first.previewUrl : '';
+    }
+
+    async function playAt(idx) {
+      if (!currentQueue[idx]) return;
+      currentIndex = idx;
+      const song = currentQueue[idx];
+      let url = song.previewUrl;
+      if (!url) url = await quickResolve(song);
+      if (!url) return alert('未找到可播放音频');
+      player.src = url;
+      player.play().catch(() => {});
+      queueInfo.textContent = `连续播放：${continuousPlay ? '开启' : '关闭'} ｜ 正在播放：${song.title} - ${song.artist}`;
+    }
+
+    async function onSongEnded() {
+      if (!continuousPlay || currentQueue.length === 0) return;
+      const nextIndex = (currentIndex + 1) % currentQueue.length;
+      await playAt(nextIndex);
+    }
+
+    function renderList(container, songs) {
+      container.innerHTML = '';
+      songs.forEach((raw, idx) => {
+        const song = normalizeSong(raw);
+        const li = document.createElement('li');
+        li.innerHTML = `
+          <div class="left">
+            <div class="name">${song.title}</div>
+            <div class="muted">${song.artist}</div>
+            <a class="url" href="${song.sourceUrl}" target="_blank" rel="noopener noreferrer">${song.sourceUrl || '无来源链接'}</a>
+          </div>
+          <div class="btns">
+            <button>播放</button>
+            <button class="btn-ghost">加入队列</button>
+          </div>
+        `;
+
+        const [playBtn, queueBtn] = li.querySelectorAll('button');
+        playBtn.onclick = async () => {
+          currentQueue = songs.map(normalizeSong);
+          await playAt(idx);
+        };
+        queueBtn.onclick = () => {
+          currentQueue.push(song);
+          queueInfo.textContent = `连续播放：${continuousPlay ? '开启' : '关闭'} ｜ 队列数量：${currentQueue.length}`;
+        };
+
+        container.appendChild(li);
+      });
+    }
+
+    async function loadDailyHotSongs() {
+      const tag = todayTag();
+      const cacheRaw = localStorage.getItem(DAILY_CACHE_KEY);
+      if (cacheRaw) {
+        try {
+          const cache = JSON.parse(cacheRaw);
+          if (cache.tag === tag && Array.isArray(cache.songs) && cache.songs.length === 5) {
+            hotMeta.textContent = `数据日期：${tag}（缓存）`;
+            return cache.songs;
+          }
+        } catch (_) {}
+      }
+
+      try {
+        const rssRes = await fetch('https://rss.applemarketingtools.com/api/v2/us/music/most-played/5/songs.json');
+        const rssData = await rssRes.json();
+        const top = (rssData.feed && rssData.feed.results) ? rssData.feed.results.slice(0, 5) : [];
+        const songs = [];
+        for (const item of top) {
+          songs.push({ name: item.name, artist: item.artistName, sourceUrl: item.url });
+        }
+        if (songs.length === 5) {
+          localStorage.setItem(DAILY_CACHE_KEY, JSON.stringify({ tag, songs }));
+          hotMeta.textContent = `数据日期：${tag}（Apple Music 热门）`;
+          return songs;
+        }
+      } catch (_) {}
+
+      hotMeta.textContent = `数据日期：${tag}（回退数据）`;
+      return fallbackSongs;
+    }
+
+    async function searchSongs() {
+      const q = input.value.trim();
+      if (!q) return;
+      resultList.innerHTML = '<li>搜索中...</li>';
+      try {
+        const res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=song&limit=10`);
+        const data = await res.json();
+        if (!data.results || data.results.length === 0) return resultList.innerHTML = '<li>没有结果</li>';
+        renderList(resultList, data.results);
+      } catch (_) {
+        resultList.innerHTML = '<li>搜索失败，请稍后再试</li>';
+      }
+    }
+
+    async function initApp() {
+      const hotSongs = await loadDailyHotSongs();
+      renderList(hotList, hotSongs);
+      document.getElementById('search').onclick = searchSongs;
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') searchSongs(); });
+      document.getElementById('toggle-loop').onclick = () => {
+        continuousPlay = !continuousPlay;
+        document.getElementById('toggle-loop').textContent = continuousPlay ? '关闭连续播放' : '开启连续播放';
+        queueInfo.textContent = `连续播放：${continuousPlay ? '开启' : '关闭'}`;
+      };
+      document.getElementById('next').onclick = () => onSongEnded();
+      player.addEventListener('ended', onSongEnded);
+    }
+
+    document.getElementById('enter').onclick = async () => {
+      if (document.getElementById('pwd').value !== ACCESS_PASSWORD) return alert('密码错误');
+      document.getElementById('login').style.display = 'none';
+      document.getElementById('app').style.display = 'block';
+      await initApp();
+    };
+  </script>
+</body>
+</html>
