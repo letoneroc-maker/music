@@ -54,6 +54,14 @@
         </div>
         <ul id="result-list" style="margin-top:8px"></ul>
 
+        <div class="section-title">YouTube 合规播放（官方嵌入）</div>
+        <div class="row">
+          <input id="yt-input" placeholder="粘贴 YouTube 链接或 Video ID" />
+          <button id="yt-play">播放</button>
+        </div>
+        <div class="muted" id="yt-msg" style="margin-top:6px">仅使用 YouTube 官方嵌入播放器，不做音视频解析/下载。</div>
+        <iframe id="yt-frame" style="margin-top:10px;width:100%;height:280px;border:1px solid var(--line);border-radius:10px;display:none" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+
         <audio id="player" controls></audio>
         <div id="queue-info" class="queue">连续播放：关闭</div>
         <div class="row" style="margin-top:8px">
@@ -201,6 +209,22 @@
       }
     }
 
+
+    function parseYouTubeId(text) {
+      if (!text) return '';
+      const v = text.trim();
+      if (/^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
+      try {
+        const u = new URL(v);
+        if (u.hostname.includes('youtu.be')) return u.pathname.replace('/', '').slice(0, 11);
+        if (u.searchParams.get('v')) return u.searchParams.get('v').slice(0, 11);
+        const parts = u.pathname.split('/').filter(Boolean);
+        const embedIdx = parts.indexOf('embed');
+        if (embedIdx >= 0 && parts[embedIdx + 1]) return parts[embedIdx + 1].slice(0, 11);
+      } catch (_) {}
+      return '';
+    }
+
     async function initApp() {
       const hotSongs = await loadDailyHotSongs();
       renderList(hotList, hotSongs);
@@ -213,6 +237,20 @@
       };
       document.getElementById('next').onclick = () => onSongEnded();
       player.addEventListener('ended', onSongEnded);
+
+      document.getElementById('yt-play').onclick = () => {
+        const raw = document.getElementById('yt-input').value;
+        const id = parseYouTubeId(raw);
+        const frame = document.getElementById('yt-frame');
+        const msg = document.getElementById('yt-msg');
+        if (!id) {
+          msg.textContent = '请输入有效的 YouTube 链接或 Video ID';
+          return;
+        }
+        frame.src = `https://www.youtube.com/embed/${id}?autoplay=1`;
+        frame.style.display = 'block';
+        msg.textContent = `已通过官方嵌入播放：https://www.youtube.com/watch?v=${id}`;
+      };
     }
 
     document.getElementById('enter').onclick = async () => {
