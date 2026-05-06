@@ -5,36 +5,55 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>超级简单音乐播放器</title>
   <style>
-    body { font-family: Arial, sans-serif; max-width: 720px; margin: 24px auto; padding: 0 12px; }
+    body { font-family: Arial, sans-serif; max-width: 760px; margin: 24px auto; padding: 0 12px; }
     h1 { font-size: 24px; margin-bottom: 12px; }
     .row { display: flex; gap: 8px; margin-bottom: 12px; }
     input { flex: 1; padding: 10px; font-size: 14px; }
     button { padding: 10px 14px; cursor: pointer; }
     ul { list-style: none; padding: 0; margin: 0; }
-    li { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #eee; }
+    li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #eee; }
     small { color: #666; }
     .section-title { margin: 18px 0 8px; font-weight: 700; }
     audio { width: 100%; margin-top: 18px; }
+    .meta { font-size: 12px; color: #888; margin-bottom: 8px; }
+    .links a { color: #0a66c2; text-decoration: none; font-size: 12px; }
+    .links a:hover { text-decoration: underline; }
+    #app { display: none; }
+    #login { border: 1px solid #ddd; padding: 16px; border-radius: 8px; }
   </style>
 </head>
 <body>
   <h1>🎵 超级简单 Web 音乐播放器</h1>
 
-  <div class="section-title">全球热门 5 首</div>
-  <ul id="hot-list"></ul>
-
-  <div class="section-title">搜索歌曲并直接播放</div>
-  <div class="row">
-    <input id="q" placeholder="输入歌曲名或歌手，例如: blinding lights" />
-    <button id="search">搜索</button>
+  <div id="login">
+    <div class="section-title">访问密码</div>
+    <div class="row">
+      <input id="pwd" type="password" placeholder="请输入访问密码" />
+      <button id="enter">进入</button>
+    </div>
+    <small>默认密码：music2026（上线后请改成你自己的）</small>
   </div>
-  <ul id="result-list"></ul>
 
-  <audio id="player" controls></audio>
+  <div id="app">
+    <div class="section-title">全球热门 5 首（每天自动更新）</div>
+    <div id="hot-meta" class="meta"></div>
+    <ul id="hot-list"></ul>
+
+    <div class="section-title">搜索歌曲并直接播放</div>
+    <div class="row">
+      <input id="q" placeholder="输入歌曲名或歌手，例如: blinding lights" />
+      <button id="search">搜索</button>
+    </div>
+    <ul id="result-list"></ul>
+
+    <audio id="player" controls></audio>
+  </div>
 
   <script>
-    // 只保留最简单逻辑：热门歌 + 搜索 + 点一下播放
-    const hotSongs = [
+    const ACCESS_PASSWORD = 'music2026';
+    const DAILY_CACHE_KEY = 'daily_hot_5';
+
+    const fallbackSongs = [
       { name: 'Blinding Lights', artist: 'The Weeknd' },
       { name: 'Shape of You', artist: 'Ed Sheeran' },
       { name: 'As It Was', artist: 'Harry Styles' },
@@ -43,9 +62,14 @@
     ];
 
     const hotList = document.getElementById('hot-list');
+    const hotMeta = document.getElementById('hot-meta');
     const resultList = document.getElementById('result-list');
     const player = document.getElementById('player');
     const input = document.getElementById('q');
+
+    function todayTag() {
+      return new Date().toISOString().slice(0, 10);
+    }
 
     function playSong(url) {
       player.src = url;
@@ -60,6 +84,7 @@
           <div>
             <div><strong>${song.trackName || song.name}</strong></div>
             <small>${song.artistName || song.artist}</small>
+            <div class="links">${song.sourceUrl ? `<a href="${song.sourceUrl}" target="_blank" rel="noopener noreferrer">来源链接</a>` : ''}</div>
           </div>
           <button>播放</button>
         `;
@@ -71,6 +96,7 @@
             quickResolveAndPlay(song.name || song.trackName, song.artist || song.artistName);
           }
         };
+
         container.appendChild(li);
       });
     }
@@ -88,6 +114,53 @@
       playSong(first.previewUrl);
     }
 
+    async function loadDailyHotSongs() {
+      const tag = todayTag();
+      const cacheRaw = localStorage.getItem(DAILY_CACHE_KEY);
+      if (cacheRaw) {
+        try {
+          const cache = JSON.parse(cacheRaw);
+          if (cache.tag === tag && Array.isArray(cache.songs) && cache.songs.length === 5) {
+            hotMeta.textContent = `数据日期：${tag}（缓存）`;
+            return cache.songs;
+          }
+        } catch (_) {}
+      }
+
+      try {
+        const rssUrl = 'https://rss.applemarketingtools.com/api/v2/us/music/most-played/5/songs.json';
+        const rssRes = await fetch(rssUrl);
+        const rssData = await rssRes.json();
+        const top = (rssData.feed && rssData.feed.results) ? rssData.feed.results.slice(0, 5) : [];
+
+        const songs = [];
+        for (const item of top) {
+          const name = item.name;
+          const artist = item.artistName;
+          const sourceUrl = item.url;
+
+          let previewUrl = '';
+          try {
+            const q = encodeURIComponent(`${name} ${artist}`);
+            const searchRes = await fetch(`https://itunes.apple.com/search?term=${q}&entity=song&limit=1`);
+            const searchData = await searchRes.json();
+            previewUrl = (searchData.results && searchData.results[0] && searchData.results[0].previewUrl) || '';
+          } catch (_) {}
+
+          songs.push({ name, artist, previewUrl, sourceUrl });
+        }
+
+        if (songs.length === 5) {
+          localStorage.setItem(DAILY_CACHE_KEY, JSON.stringify({ tag, songs }));
+          hotMeta.textContent = `数据日期：${tag}（Apple Music 热门）`;
+          return songs;
+        }
+      } catch (_) {}
+
+      hotMeta.textContent = `数据日期：${tag}（回退数据）`;
+      return fallbackSongs;
+    }
+
     async function searchSongs() {
       const q = input.value.trim();
       if (!q) return;
@@ -102,18 +175,32 @@
           resultList.innerHTML = '<li>没有结果</li>';
           return;
         }
-        renderList(resultList, data.results);
-      } catch (e) {
+        renderList(resultList, data.results.map(r => ({ ...r, sourceUrl: r.trackViewUrl || r.collectionViewUrl || '' })));
+      } catch (_) {
         resultList.innerHTML = '<li>搜索失败，请稍后再试</li>';
       }
     }
 
-    document.getElementById('search').onclick = searchSongs;
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') searchSongs();
-    });
+    async function initApp() {
+      const hotSongs = await loadDailyHotSongs();
+      renderList(hotList, hotSongs);
 
-    renderList(hotList, hotSongs);
+      document.getElementById('search').onclick = searchSongs;
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') searchSongs();
+      });
+    }
+
+    document.getElementById('enter').onclick = async () => {
+      const value = document.getElementById('pwd').value;
+      if (value !== ACCESS_PASSWORD) {
+        alert('密码错误');
+        return;
+      }
+      document.getElementById('login').style.display = 'none';
+      document.getElementById('app').style.display = 'block';
+      await initApp();
+    };
   </script>
 </body>
 </html>
